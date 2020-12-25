@@ -4,7 +4,11 @@ import requests
 from bs4 import BeautifulSoup#用于解析网页
 import pdfkit
 
-headers={ "User-Agent":"Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.61 Safari/537.36" }
+#headers={ "User-Agent":"Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.61 Safari/537.36" }
+headers={ "User-Agent":"Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.61 Safari/537.36",
+"Cookie": "language=zh-CN; _ga=GA1.2.1430385836.1608874698; _gid=GA1.2.998430637.1608874698",
+"Accept-Language": "zh-CN,zh;q=0.9"
+ }
 def get_content(url):
     """
     解析URL，获取需要的html内容
