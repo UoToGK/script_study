@@ -8,6 +8,7 @@ import mitmproxy.http
 import json
 import time
 import struct
+import datetime
 from socket import *
 #作品 https://aweme.snssdk.com/aweme/v1/aweme/post/
 post_api = 'https://aweme.snssdk.com/aweme/v1/aweme/post/'
@@ -20,8 +21,8 @@ favo_api = 'https://aweme-lq.snssdk.com/aweme/v1/aweme/favorite/'
 dongtai_list_api='https://aweme-lq.snssdk.com/aweme/v1/forward/list/?'
 #音乐
 music_list_api='https://aweme-lq.snssdk.com/aweme/v1/original/music/list/?'
-#个人信息
-profile_api='https://aweme-lq.snssdk.com/aweme/v1/user/profile/other/?'
+#个人信息 https://aweme.snssdk.com/aweme/v1/user/profile/other/?sec_user_id
+profile_api='https://aweme.snssdk.com/aweme/v1/user/profile/other/?'
 # 关注
 follow_api='https://aweme-lq.snssdk.com/aweme/v2/follow/feed/?'
 
@@ -90,7 +91,10 @@ def get_local_time(create_time):
     return pub_date
 
 class MyAddons():
-
+    follower_count=0
+    total_favorited=0
+    mplatform_followers_count=0
+    following_count=0
     def response(self,flow):
         if flow.request.url.startswith(post_api) or flow.request.url.startswith(favo_api):
             if flow.response.status_code == 200:
@@ -182,6 +186,20 @@ class MyAddons():
                             send_data_to_server(header_dict, 'follow')
                         else:
                             continue
+        elif flow.request.url.startswith(profile_api):
+            if flow.response.status_code == 200:
+                url_json = json.loads(flow.response.text)
+                # 抖音粉丝
+                MyAddons.follower_count=url_json["user"]["follower_count"]
+                # 获赞数量
+                MyAddons.total_favorited=url_json["user"]["total_favorited"]
+                # 全平台粉丝
+                MyAddons.mplatform_followers_count=url_json["user"]["mplatform_followers_count"]
+                # 关注者
+                MyAddons.following_count=url_json["user"]["following_count"]
+                print("MyAddons.follower_count",MyAddons.follower_count)
+                
+                
             
             
 def getMainInfo(aweme_list,type):
@@ -200,16 +218,18 @@ def getMainInfo(aweme_list,type):
         desc=aweme_list['desc']
         nickname=aweme_list['author']['nickname']
         music_url=aweme_list['music']['play_url']['uri']
-        play_url=aweme_list['video']['play_addr_265']['url_list'][0]
+        play_url=aweme_list['video']['download_addr']['url_list'][0]
         statistics=aweme_list['statistics']
         text_extra=aweme_list['text_extra']
         comment_count=aweme_list['statistics']['comment_count']
         digg_count=aweme_list['statistics']['digg_count']
-        download_count=aweme_list['statistics']['download_count']
+        #download_count=aweme_list['statistics']['download_count']
         share_count=aweme_list['statistics']['share_count']
         share_url=aweme_list['share_url']
         create_time = aweme_list['create_time']
+        duration = aweme_list['video']["duration"]
         create_time = get_local_time(create_time)
+        capture_time=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         print(desc,play_url,nickname,music_url)
         header_dict = {
             'type': type,
@@ -225,11 +245,20 @@ def getMainInfo(aweme_list,type):
             'desc':desc,
             'share_url':share_url,
             'create_time':create_time,
+            'capture_time':capture_time,
             'aweme_id':aweme_id,
             'music_url':music_url,
             'aweme_id_create_time': aweme_id + '_' + create_time,
             'nickname': nickname,
-            'play_url': play_url
+            'comment_count': comment_count,
+            'digg_count': digg_count,
+            'share_count': share_count,
+            'duration': duration,
+            'play_url': play_url,
+            'follower_count':MyAddons.follower_count,
+            'mplatform_followers_count':MyAddons.mplatform_followers_count,
+            'total_favorited':MyAddons.total_favorited,
+            'following_count':MyAddons.following_count
         }
         return header_dict
     except Exception as e:
