@@ -1,0 +1,259 @@
+"""
+===================================================
+    -*- coding:utf-8 -*-
+    FileName   :mitmproxy_douyin_get_url_scripts.py
+====================================================
+"""
+import mitmproxy.http
+import json
+import time
+import struct
+import datetime
+import re,os
+import hashlib
+from socket import *
+import sys
+import requests
+from retrying import retry
+from contextlib import closing
+headers = {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'pragma': 'no-cache',
+            'cache-control': 'no-cache',
+            'upgrade-insecure-requests': '1',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1',
+        }
+#作品 https://aweme.snssdk.com/aweme/v1/aweme/post/
+post_api = 'https://aweme.snssdk.com/aweme/v1/aweme/post/'
+# 推荐
+feed_api = 'https://aweme.snssdk.com/aweme/v2/feed/'
+#喜爱
+favo_api = 'https://aweme.snssdk.com/aweme/v1/aweme/favorite/'
+# aweme_list_api='https://aweme.snssdk.com/aweme/v1/aweme/post/?'
+#动态
+dongtai_list_api='https://aweme.snssdk.com/aweme/v1/forward/list/?'
+#音乐
+music_list_api='https://aweme.snssdk.com/aweme/v1/original/music/list/?'
+#个人信息 https://aweme.snssdk.com/aweme/v1/user/profile/other/?sec_user_id
+profile_api='https://aweme.snssdk.com/aweme/v1/user/profile/other/?'
+# 关注
+follow_api='https://aweme.snssdk.com/aweme/v2/follow/feed/?'
+
+
+def send_data_to_server(header_dict, type):
+    '''
+    :param header_dict 获取到的数据包字典
+    :param type 原视频类型，feed，post，favo
+        与服务端通信发送数据，使用自定义协议
+        每次调用就创建一个套接字，用完就关闭
+    '''
+    tcp_client_socket = None
+    host = '127.0.0.1'
+    port = 9527
+    address = (host, port)
+    try:
+        tcp_client_socket = socket(AF_INET, SOCK_STREAM)
+        tcp_client_socket.connect(address)
+        if type == 'post' or type == 'favo' or type=='dongtai' or type=='follow' :
+            json_data = json.dumps(header_dict)
+            json_bytes = json_data.encode('utf-8')
+            tcp_client_socket.settimeout(10)
+            tcp_client_socket.send(struct.pack('i', len(json_bytes)))
+            tcp_client_socket.send(json_bytes)
+    except:
+        pass
+    if tcp_client_socket:
+        tcp_client_socket.close()
+
+def get_local_time(create_time):
+    '''
+    :param create_time 原视频的发布时间，linux时间戳
+    :return: 返回年月日格式的日期
+    '''
+    time_local = time.localtime(int(create_time))
+    pub_date = time.strftime("%Y-%m-%d", time_local)
+    return pub_date
+
+class MyAddons():
+    follower_count=0
+    total_favorited=0
+    mplatform_followers_count=0
+    following_count=0
+    def response(self,flow):
+        if flow.request.url.startswith(post_api) or flow.request.url.startswith(favo_api):
+            if flow.response.status_code == 200:
+                url_json = json.loads(flow.response.text)
+                time.sleep(10)
+                if url_json and url_json['aweme_list']:
+                    # max_cursor=url_json["max_cursor"]
+                    sec_uid = re.search(r'sec_user_id=.*?\&', flow.request.url).group(0)
+                    sec_uid=sec_uid[12:-1]
+                    get_video_by_url(sec_uid)
+        elif flow.request.url.startswith(profile_api):
+            if flow.response.status_code == 200:
+                url_json = json.loads(flow.response.text)
+                # 抖音粉丝
+                MyAddons.follower_count=url_json["user"]["follower_count"]
+                # 获赞数量
+                MyAddons.total_favorited=url_json["user"]["total_favorited"]
+                # 全平台粉丝
+                MyAddons.mplatform_followers_count=url_json["user"]["mplatform_followers_count"]
+                # 关注者
+                MyAddons.following_count=url_json["user"]["following_count"]
+                print("MyAddons.follower_count",MyAddons.follower_count)
+                        
+        
+                
+            
+            
+def getMainInfo(aweme_list,type):
+    try:
+        if type=='dongtai' or type=='follow':
+            aweme_list=aweme_list["aweme"]
+        aweme_id = aweme_list['aweme_id']
+        custom_signature=aweme_list['author']['signature']
+        short_id=aweme_list['author']['short_id']
+        if short_id=='691676627':
+            return 
+        unique_id=aweme_list['author']['unique_id']
+        desc=aweme_list['desc']
+        nickname=aweme_list['author']['nickname']
+        play_url=aweme_list['video']['download_addr']['url_list'][0]
+        text_extra=aweme_list['text_extra']
+        comment_count=aweme_list['statistics']['comment_count']
+        digg_count=aweme_list['statistics']['digg_count']
+        share_count=aweme_list['statistics']['share_count']
+        duration = aweme_list['video']["duration"]
+        capture_time=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(desc,nickname)
+        header_dict = {
+            'type': type,
+            'aweme_id':aweme_id,
+            'text_extra':text_extra,
+            'short_id':short_id,
+            'unique_id':unique_id,
+            'custom_signature':custom_signature,
+            'desc':desc,
+            'capture_time':capture_time,
+            'aweme_id':aweme_id,
+            'nickname': nickname,
+            'comment_count': comment_count,
+            'digg_count': digg_count,
+            'share_count': share_count,
+            'duration': duration,
+            'play_url': play_url,
+            'follower_count':MyAddons.follower_count,
+            'mplatform_followers_count':MyAddons.mplatform_followers_count,
+            'total_favorited':MyAddons.total_favorited,
+            'following_count':MyAddons.following_count
+        }
+        return header_dict
+    except Exception as e:
+        print("Exception",e)
+        
+def get_request( url, params=None):
+    if params is None:
+        params = {}
+    response = requests.get(url, params=params, headers=headers, timeout=10)
+    assert response.status_code == 200
+    return response
+
+def get_video_urls( sec_uid, max_cursor):
+        user_url_prefix = 'https://www.iesdouyin.com/web/api/v2/aweme/post/?sec_uid={0}&max_cursor={1}&count=2000'
+ 
+        i = 0
+        result = []
+        has_more = False
+        while result == []:
+            i = i + 1
+            sys.stdout.write('---解析视频链接中 正在第 {} 次尝试...\r'.format(str(i)))
+            sys.stdout.flush()
+
+            user_url = user_url_prefix.format(sec_uid, max_cursor)
+            response = get_request(user_url)
+            html = json.loads(response.content.decode())
+            if i>100:
+                break
+            if html['aweme_list'] != []:
+                max_cursor = html['max_cursor']
+                has_more = bool(html['has_more'])
+                result = html['aweme_list']
+                return  result,max_cursor, has_more
+ 
+def get_video_by_url(sec_uid):
+    max_cursor = 0
+    has_more = True
+    total_count = 0
+    while has_more:
+        result, max_cursor, has_more = get_video_urls(sec_uid, max_cursor)
+        page_count = len(result)
+        total_count = total_count + page_count
+        print('---视频下载中 本页共有{0}个作品 累计{1}个作品 翻页标识:{2} 是否还有更多内容:{3}\r'
+            .format(page_count, total_count, max_cursor, has_more))
+        save_path="./download_video/"
+
+        for num in range(page_count):
+            item=result[num]
+
+            header_dict=getMainInfo(item,'post')
+            title=header_dict["desc"]
+
+            nickname = item['author']['nickname'] if re.sub(r'[\/:*?"<>|]', '', item['author']['nickname']) else None
+
+            nickname_dir = os.path.join(save_path, validate_file_name(nickname))
+    
+            if not os.path.exists(nickname_dir):
+                os.makedirs(nickname_dir)
+            video_path = os.path.join(nickname_dir, validate_file_name(title))
+            
+            header_dict["video_path"]=video_path
+            if not os.path.exists(video_path):
+
+                video_downloader(result[num]['video']['play_addr']['url_list'][0], video_path)
+            else:
+                print('视频已经下载了')
+            send_data_to_server(header_dict, 'post')
+            print('---正在解析第{0}/{1}个视频链接 [{2}]，请稍后...'.format(num + 1, page_count, title))
+            print('\n')
+        print('---本页视频下载完成...\r')
+
+def video_downloader(video_url, video_name):
+    headers = {
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'pragma': 'no-cache',
+            'cache-control': 'no-cache',
+            'upgrade-insecure-requests': '1',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1',
+        }
+    size = 0
+    block_count=50
+    video_url = video_url.replace('aweme.snssdk.com', 'api.amemv.com')
+    with closing(requests.get(video_url, headers=headers, stream=True)) as response:
+        chunk_size = 1024
+        content_size = int(response.headers['content-length'])
+        if response.status_code == 200:
+            text = '----[文件大小]:%0.2f MB' % (content_size / chunk_size / 1024)
+            with open(video_name, 'wb') as file:
+                for data in response.iter_content(chunk_size=chunk_size):
+                    file.write(data)
+                    size += len(data)
+                    file.flush()
+                    done = int(block_count * size / content_size)
+                    sys.stdout.write('%s [下载进度]:%s%s %.2f%%\r' % (text, '█' * done, ' ' * (block_count - done), float(size / content_size * 100)))
+                    sys.stdout.flush()
+            os.rename(video_name, video_name+'.mp4')
+
+def validate_file_name(file_name):
+    """
+    :param file_name:等待验证的文件名
+    :return: 验证windows文件名的合法性 将不合法的字符替换为 下划线_
+    """
+    import re
+    rstr = r"[\/\\\:\*\?\"\<\>\|\“\”\.]"  # '/ \ : * ? " < > |'
+    new_file_name = re.sub(rstr, "_", file_name)  # 替换为下划线
+    return new_file_name    
+addons = {
+   MyAddons()
+}
